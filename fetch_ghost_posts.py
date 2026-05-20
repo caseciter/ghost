@@ -9,7 +9,7 @@ GHOST_URL = os.environ.get("GHOST_URL", "https://www.caseciter.com")
 GHOST_API_KEY = os.environ.get("GHOST_API_KEY", "a8cb21b63d79d87a2c3e748550")
 
 # Filters (Date format: YYYY-MM-DD)
-START_DATE = os.environ.get("START_DATE", "2026-05-19")  
+START_DATE = os.environ.get("START_DATE", "2026-01-01")  
 END_DATE = os.environ.get("END_DATE", "2026-12-31")      
 KEYWORD_FILTER = os.environ.get("KEYWORD_FILTER", "")   
 
@@ -76,66 +76,45 @@ def matches_filters(post):
     return True
 
 def create_compiled_markdown(posts):
-    """Compiles all matched posts into a single Markdown document with a TOC."""
+    """Compiles all matched posts into a single clean Markdown document."""
     if not posts:
         print("No posts matched your filtering criteria.")
         return
 
-    # Sort posts chronologically by publication date (oldest to newest)
+    # Sort posts chronologically (oldest to newest)
     posts.sort(key=lambda x: x.get('published_at', ''))
 
-    # Generate a unique dynamic filename matching current execution filters
-    timestamp = datetime.now().strftime("%Y%m%d-%H%M%H")
-    filename = f"backups/compiled_posts_{timestamp}.md"
-    
-    # Ensure backups directory exists
+    # Saving as a static unified filename for continuous replacement or tracking
+    filename = "backups/compiled_posts.md"
     os.makedirs("backups", exist_ok=True)
 
-    # 1. Start Building the Document Header
-    document_body = f"# Compiled Blog Posts Export\n"
-    document_body += f"*Generated on {datetime.now().strftime('%Y-%m-%d %H:%M')}*\n\n"
-    
-    # 2. Generate Clickable Table of Contents
-    document_body += "## Table of Contents\n"
-    for idx, post in enumerate(posts, 1):
-        title = post.get('title', 'Untitled')
-        # Create a basic Markdown anchor slug for cross-linking
-        anchor = re.sub(r'[^\w\s-]', '', title.lower()).replace(' ', '-')
-        document_body += f"{idx}. [{title}](#{anchor})\n"
-    
-    document_body += "\n---\n\n"
+    document_body = ""
 
-    # 3. Append Each Post Body
     for post in posts:
         title = post.get('title', 'Untitled')
-        published_at = post.get('published_at', '')
-        date_short = published_at[:10] if published_at else "Unknown Date"
+        url = post.get('url', GHOST_URL)
         html_content = post.get('html', '')
         
-        # Extract tags array
-        tags = [tag['name'] for tag in post.get('tags', [])]
-        tags_str = ", ".join(tags) if tags else "None"
+        # Strip out any native Ghost toggle/accordion blocks wrapper elements if they exist 
+        # while keeping the inner raw structural text content intact
+        markdown_content = md(html_content, heading_style="ATX", strip=['details', 'summary'])
         
-        # Convert HTML body to clean Markdown formatting
-        markdown_body = md(html_content, heading_style="ATX")
+        # Clean up double vertical spacing gaps
+        markdown_content = re.sub(r'\n{3,}', '\n\n', markdown_content).strip()
         
-        # Append single post structure
-        document_body += f"## {title}\n"
-        document_body += f"**Published Date:** {date_short} | **Tags:** `{tags_str}`\n\n"
-        document_body += f"{markdown_body}\n\n"
-        document_body += "---\n\n" # Visual divider between different items
+        # Format layout precisely: Title heading, Content body text, and Resource URL footprint
+        document_body += f"# {title}\n\n"
+        document_body += f"{markdown_content}\n\n"
+        document_body += f"**Original Post URL:** [{url}]({url})\n\n"
+        document_body += "---\n\n"
 
-    # Save to disk
     with open(filename, "w", encoding="utf-8") as f:
-        f.write(document_body)
+        f.write(document_body.strip())
         
-    print(f"Success! Compiled {len(posts)} posts into a single file: {filename}")
+    print(f"Success! Clean compiled document generated at: {filename}")
 
 def main():
-    print("Initializing compiled Ghost blog sync...")
     all_posts = fetch_all_posts()
-    print(f"Retrieved {len(all_posts)} total posts from API.")
-    
     matched_posts = [post for post in all_posts if matches_filters(post)]
     create_compiled_markdown(matched_posts)
 
