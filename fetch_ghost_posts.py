@@ -4,28 +4,20 @@ from datetime import datetime
 import requests
 from markdownify import markdownify as md
 
-# Configuration - Loaded from environment variables for security in GitHub Actions
+# Configuration
 GHOST_URL = os.environ.get("GHOST_URL", "https://www.caseciter.com")
 GHOST_API_KEY = os.environ.get("GHOST_API_KEY", "a8cb21b63d79d87a2c3e748550")
 
-# Filters (Can be left empty if no filtering is needed)
-# Date format: YYYY-MM-DD
-START_DATE = os.environ.get("START_DATE", "2026-01-01")  
+# Filters (Date format: YYYY-MM-DD)
+START_DATE = os.environ.get("START_DATE", "2026-05-19")  
 END_DATE = os.environ.get("END_DATE", "2026-12-31")      
-KEYWORD_FILTER = os.environ.get("KEYWORD_FILTER", "")   # e.g., "judgment" or "Kerala"
-
-def slugify(text):
-    """Saves filenames safely by removing special characters."""
-    text = text.lower()
-    text = re.sub(r'[^\w\s-]', '', text)
-    return re.sub(r'[-\s]+', '-', text).strip('-')
+KEYWORD_FILTER = os.environ.get("KEYWORD_FILTER", "")   
 
 def fetch_all_posts():
     """Fetches all posts from the Ghost Content API using pagination."""
     posts = []
     page = 1
-    limit = 15  # Default ghost api limit per page
-    
+    limit = 15
     endpoint = f"{GHOST_URL}/ghost/api/content/posts/"
     
     while True:
@@ -36,7 +28,6 @@ def fetch_all_posts():
             'formats': 'html',
             'include': 'tags,authors'
         }
-        
         try:
             response = requests.get(endpoint, params=params)
             response.raise_for_status()
@@ -47,12 +38,9 @@ def fetch_all_posts():
                 break
                 
             posts.extend(page_posts)
-            
-            # Check pagination meta to see if we reached the end
             meta = data.get('meta', {}).get('pagination', {})
             if page >= meta.get('pages', 1):
                 break
-                
             page += 1
         except Exception as e:
             print(f"Error fetching data from Ghost API: {e}")
@@ -62,12 +50,10 @@ def fetch_all_posts():
 
 def matches_filters(post):
     """Applies date and keyword filtering to a post."""
-    # 1. Parse Published Date
     pub_date_str = post.get('published_at')
     if not pub_date_str:
         return False
     
-    # Ghost API returns ISO 8601 strings (e.g., 2026-05-20T14:59:00.000Z)
     post_date = datetime.fromisoformat(pub_date_str.replace('Z', '+00:00')).date()
     
     if START_DATE:
@@ -80,65 +66,78 @@ def matches_filters(post):
         if post_date > end:
             return False
             
-    # 2. Keyword Filtering (Searches Title and Content)
     if KEYWORD_FILTER:
         keyword = KEYWORD_FILTER.lower()
         title = post.get('title', '').lower()
         html_content = post.get('html', '').lower()
-        
         if keyword not in title and keyword not in html_content:
             return False
             
     return True
 
-def save_to_markdown(post):
-    """Converts post HTML content to Markdown and writes it to a file."""
-    title = post.get('title', 'Untitled')
-    published_at = post.get('published_at', '')
-    html_content = post.get('html', '')
-    slug = post.get('slug', slugify(title))
+def create_compiled_markdown(posts):
+    """Compiles all matched posts into a single Markdown document with a TOC."""
+    if not posts:
+        print("No posts matched your filtering criteria.")
+        return
+
+    # Sort posts chronologically by publication date (oldest to newest)
+    posts.sort(key=lambda x: x.get('published_at', ''))
+
+    # Generate a unique dynamic filename matching current execution filters
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%H")
+    filename = f"backups/compiled_posts_{timestamp}.md"
     
-    # Convert HTML body to Markdown
-    markdown_content = md(html_content, heading_style="ATX")
-    
-    # Extract tags
-    tags = [tag['name'] for tag in post.get('tags', [])]
-    tags_str = ", ".join(tags)
-    
-    # Build Hugo/Jekyll style Front Matter header
-    front_matter = f"---\n"
-    front_matter += f"title: \"{title}\"\n"
-    front_matter += f"date: {published_at}\n"
-    front_matter += f"slug: {slug}\n"
-    front_matter += f"tags: [{tags_str}]\n"
-    front_matter += f"---\n\n"
-    
-    full_output = front_matter + markdown_content
-    
-    # Ensure delivery folder exists
+    # Ensure backups directory exists
     os.makedirs("backups", exist_ok=True)
+
+    # 1. Start Building the Document Header
+    document_body = f"# Compiled Blog Posts Export\n"
+    document_body += f"*Generated on {datetime.now().strftime('%Y-%m-%d %H:%M')}*\n\n"
     
-    # Create filename prefix matching date for cleaner directory sorting
-    date_prefix = published_at[:10] if published_at else "unknown-date"
-    filename = f"backups/{date_prefix}-{slug}.md"
+    # 2. Generate Clickable Table of Contents
+    document_body += "## Table of Contents\n"
+    for idx, post in enumerate(posts, 1):
+        title = post.get('title', 'Untitled')
+        # Create a basic Markdown anchor slug for cross-linking
+        anchor = re.sub(r'[^\w\s-]', '', title.lower()).replace(' ', '-')
+        document_body += f"{idx}. [{title}](#{anchor})\n"
     
-    with open(filename, "w", encoding="utf-8") as f:
-        f.write(full_output)
+    document_body += "\n---\n\n"
+
+    # 3. Append Each Post Body
+    for post in posts:
+        title = post.get('title', 'Untitled')
+        published_at = post.get('published_at', '')
+        date_short = published_at[:10] if published_at else "Unknown Date"
+        html_content = post.get('html', '')
         
-    print(f" Saved: {filename}")
+        # Extract tags array
+        tags = [tag['name'] for tag in post.get('tags', [])]
+        tags_str = ", ".join(tags) if tags else "None"
+        
+        # Convert HTML body to clean Markdown formatting
+        markdown_body = md(html_content, heading_style="ATX")
+        
+        # Append single post structure
+        document_body += f"## {title}\n"
+        document_body += f"**Published Date:** {date_short} | **Tags:** `{tags_str}`\n\n"
+        document_body += f"{markdown_body}\n\n"
+        document_body += "---\n\n" # Visual divider between different items
+
+    # Save to disk
+    with open(filename, "w", encoding="utf-8") as f:
+        f.write(document_body)
+        
+    print(f"Success! Compiled {len(posts)} posts into a single file: {filename}")
 
 def main():
-    print("Initializing Ghost blog backup sync...")
+    print("Initializing compiled Ghost blog sync...")
     all_posts = fetch_all_posts()
     print(f"Retrieved {len(all_posts)} total posts from API.")
     
-    saved_count = 0
-    for post in all_posts:
-        if matches_filters(post):
-            save_to_markdown(post)
-            saved_count += 1
-            
-    print(f"\nTask Complete! Successfully exported {saved_count} posts matching filters.")
+    matched_posts = [post for post in all_posts if matches_filters(post)]
+    create_compiled_markdown(matched_posts)
 
 if __name__ == "__main__":
     main()
