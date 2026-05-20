@@ -1,0 +1,54 @@
+name: Fetch Ghost Blog Content
+
+on:
+  workflow_dispatch:
+    inputs:
+      keyword:
+        description: 'Keyword Filter (leave blank for all)'
+        required: false
+        default: ''
+      start_date:
+        description: 'Start Date (YYYY-MM-DD)'
+        required: false
+        default: '2024-01-01'
+      end_date:
+        description: 'End Date (YYYY-MM-DD)'
+        required: false
+        default: '2026-12-31'
+
+jobs:
+  backup_posts:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout Code Repository
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+
+    - name: Install Dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+
+    - name: Execute Backup Script
+      env:
+        GHOST_URL: "https://www.caseciter.com"
+        GHOST_API_KEY: "a8cb21b63d79d87a2c3e748550"
+        KEYWORD_FILTER: ${{ github.event.inputs.keyword }}
+        START_DATE: ${{ github.event.inputs.start_date }}
+        END_DATE: ${{ github.event.inputs.end_date }}
+      run: |
+        python fetch_ghost_posts.py
+
+    - name: Commit and Push Markdown Changes
+      run: |
+        git config --global user.name "GitHub Action Bot"
+        git config --global user.email "actions@github.com"
+        git add backups/*.md || true
+        # Only commit if actual modifications/additions are detected
+        git diff-index --quiet HEAD || git commit -m "Automated Sync: Exported Ghost posts to markdown"
+        git push origin main
